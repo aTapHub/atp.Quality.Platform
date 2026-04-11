@@ -1,0 +1,61 @@
+name: 'ATP Quality Platform - E2E'
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+# Permissions needed for Terraform Cloud and GitHub integration
+permissions:
+  contents: read
+
+jobs:
+  infrastructure:
+    name: '1. Infrastructure (Terraform)'
+    runs-on: ubuntu-latest
+    env:
+      DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+
+      - name: Terraform Init
+        working-directory: ./.infrastructure
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: ./.infrastructure
+        run: terraform plan -input=false
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        working-directory: ./.infrastructure
+        run: terraform apply -auto-approve -input=false
+
+  deploy_app:
+    name: '2. Application (Helm)'
+    needs: infrastructure
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # In Phase 2, we will add the steps to install the Boutique App here
+      - name: Placeholder for Helm Deploy
+        run: echo "Connecting to DigitalOcean K8s and running Helm install..."
+
+  quality_gates:
+    name: '3. Quality Gates'
+    needs: deploy_app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Placeholder for Performance/E2E Tests
+        run: echo "Running parallelized Playwright and K6 tests..."
