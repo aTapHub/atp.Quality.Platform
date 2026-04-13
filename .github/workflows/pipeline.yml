@@ -1,4 +1,4 @@
-name: 'ATP Quality Platform - E2E'
+name: 'ATP Quality Platform - E2E project'
 
 on:
   push:
@@ -16,7 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DIGITALOCEAN_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
-    
+    outputs:
+      boutique_url: ${{ steps.tf_output.outputs.boutique_url }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -39,26 +41,64 @@ jobs:
         working-directory: ./.infrastructure
         run: terraform apply -auto-approve -input=false
 
-  deploy_app:
-    name: '2. Application (Helm)'
+      - name: Capture Boutique URL
+        id: tf_output
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        working-directory: ./.infrastructure
+        run: echo "boutique_url=$(terraform output -raw boutique_public_url)" >> $GITHUB_OUTPUT
+
+  health_check:
+    name: '2. Health Check'
     needs: infrastructure
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    env:
+      BOUTIQUE_URL: ${{ needs.infrastructure.outputs.boutique_url }}
+      DIGITALOCEAN_ACCESS_TOKEN: ${{ secrets.DIGITALOCEAN_TOKEN }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_TOKEN }}
 
-      # In Phase 2, we will add the steps to install the Boutique App here
-      - name: Placeholder for Helm Deploy
-        run: echo "Connecting to DigitalOcean K8s and running Helm install..."
+      - name: Export kubeconfig
+        run: doctl kubernetes cluster kubeconfig save atp-quality-cluster
+
+      - name: Patch gRPC probe timeouts
+        run: |
+          for svc in emailservice recommendationservice; do
+            kubectl patch deployment $svc -n default --type='json' -p='[
+              {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/initialDelaySeconds", "value": 10},
+              {"op": "replace", "path": "/spec/template/spec/containers/0/livenessProbe/timeoutSeconds", "value": 5},
+              {"op": "replace", "path": "/spec/template/spec/containers/0/readinessProbe/initialDelaySeconds", "value": 10},
+              {"op": "replace", "path": "/spec/template/spec/containers/0/readinessProbe/timeoutSeconds", "value": 5}
+            ]'
+          done
+
+      - name: Wait for app to be ready
+        run: |
+          echo "Polling $BOUTIQUE_URL..."
+          for i in $(seq 1 10); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BOUTIQUE_URL")
+            echo "Attempt $i: HTTP $STATUS"
+            if [ "$STATUS" = "200" ]; then
+              echo "App is ready."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "App did not become ready in time."
+          exit 1
 
   quality_gates:
     name: '3. Quality Gates'
-    needs: deploy_app
+    needs: [health_check, infrastructure]
     runs-on: ubuntu-latest
+    env:
+      BOUTIQUE_URL: ${{ needs.infrastructure.outputs.boutique_url }}
     steps:
       - name: Placeholder for Performance/E2E Tests
-        run: echo "Running parallelized Playwright and K6 tests..."
+        run: echo "Running parallelized Playwright and K6 tests against $BOUTIQUE_URL"
 
   teardown:
     name: '4. Teardown Infrastructure'
