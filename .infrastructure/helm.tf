@@ -31,11 +31,6 @@ resource "helm_release" "online_boutique" {
   # Ensures a clean state if the first install fails
   cleanup_on_fail = true
 
-  # Disable GCP-specific features that fail outside of GCP (DigitalOcean has no GCP auth)
-  set = [
-    { name = "emailService.env.DISABLE_TRACING",  value = "1" },
-    { name = "emailService.env.DISABLE_PROFILER", value = "1" }
-  ]
 }
 
 # 4. Wait for DigitalOcean to assign the LoadBalancer IP
